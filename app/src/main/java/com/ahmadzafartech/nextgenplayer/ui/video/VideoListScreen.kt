@@ -1,0 +1,320 @@
+package com.ahmadzafartech.nextgenplayer.ui.video
+
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import androidx.navigation.NavController
+import coil.compose.AsyncImage
+import com.ahmadzafartech.nextgenplayer.R
+import com.ahmadzafartech.nextgenplayer.domain.Video
+import com.ahmadzafartech.nextgenplayer.util.formatMillis
+import com.ahmadzafartech.nextgenplayer.viewmodel.VideoListViewModel
+import com.ahmadzafartech.nextgenplayer.viewmodel.VideoPlayerViewModel
+import kotlinx.coroutines.launch
+import java.io.File
+
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+fun VideoListScreen(
+    folderPath: String,
+    navController: NavController,
+    listViewModel: VideoListViewModel,
+    playerViewModel: VideoPlayerViewModel
+) {
+    val context = LocalContext.current
+    var isSearching by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Selected video for bottom sheet
+    var selectedVideo by remember { mutableStateOf<Video?>(null) }
+    val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(folderPath) {
+        listViewModel.loadVideos(context, folderPath)
+    }
+
+    // Filter videos based on search
+    val filteredVideos = if (searchQuery.isEmpty()) {
+        listViewModel.videos
+    } else {
+        listViewModel.videos.filter { it.title.contains(searchQuery, ignoreCase = true) }
+    }
+
+    // Main Scaffold
+    Scaffold(
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = {
+                    if (isSearching) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            singleLine = true,
+                            placeholder = { Text("Search videos", color = Color.Gray) },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    } else {
+                        Text(folderPath, color = Color.White)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        isSearching = !isSearching
+                        if (!isSearching) searchQuery = ""
+                    }) {
+                        Icon(
+                            imageVector = if (isSearching) Icons.Default.Close else Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = Color.White
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = Color(0xFF121212)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+        },
+        containerColor = Color(0xFF121212)
+    ) { padding ->
+
+        if (filteredVideos.isEmpty()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("No videos in this folder", color = Color.White)
+            }
+        } else {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(filteredVideos.size) { index ->
+                    val video = filteredVideos[index]
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = {
+                                    // Play video
+                                    playerViewModel.setPlaylist(context, filteredVideos.toList(), index)
+                                    navController.navigate("player/${Uri.encode(video.uri.toString())}")
+                                },
+                                onLongClick = {
+                                    selectedVideo = video
+                                    scope.launch { bottomSheetState.show() }
+                                }
+                            ),
+                        elevation = CardDefaults.cardElevation(4.dp),
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                    ) {
+                        Column {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(1f)
+                            ) {
+                                val bitmap = video.thumbnail
+                                if (bitmap != null) {
+                                    Image(
+                                        bitmap = bitmap.asImageBitmap(),
+                                        contentDescription = video.title,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                } else {
+                                    AsyncImage(
+                                        model = video.uri,
+                                        contentDescription = video.title,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop,
+                                        placeholder = painterResource(R.drawable.ic_launcher_background),
+                                        error = painterResource(R.drawable.ic_launcher_background)
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Play",
+                                    tint = Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .align(Alignment.Center)
+                                )
+                            }
+
+                            Spacer(Modifier.height(4.dp))
+
+                            Text(
+                                text = video.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            )
+
+                            val durationText = video.duration?.let { formatMillis(it) } ?: "Unknown"
+                            Text(
+                                text = durationText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Bottom Sheet for Video Info & Share
+        if (selectedVideo != null) {
+            ModalBottomSheet(
+                onDismissRequest = { selectedVideo = null },
+                sheetState = bottomSheetState,
+                dragHandle = { Spacer(Modifier.height(8.dp)) },
+                containerColor = Color(0xFF011228),
+                tonalElevation = 8.dp,
+            ) {
+                val video = selectedVideo!!
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Text(video.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Row {
+                        Text("Duration: ${video.duration?.let { formatMillis(it) } ?: "Unknown"}",
+                            color = Color.Gray)
+                        Spacer(Modifier.width(16.dp))
+                        Text("Resolution: ${video.width}x${video.height}", color = Color.Gray)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    video.thumbnail?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = video.title,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(200.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Button(onClick = {
+                            shareVideo(context,video)
+                        }) {
+                            Icon(Icons.Default.Share, contentDescription = "Share")
+                            Spacer(Modifier.width(8.dp))
+                            Text("Share")
+                        }
+                        // Other buttons like Add to Playlist, Info can go here
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun shareVideo(context: Context, video: Video) {
+    try {
+        val file = File(video.uri.path!!)
+        val contentUri = FileProvider.getUriForFile(
+            context,
+            context.packageName + ".fileprovider",
+            file
+        )
+
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "video/*"
+            putExtra(Intent.EXTRA_STREAM, contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        context.startActivity(Intent.createChooser(shareIntent, "Share video via"))
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+
+
+
