@@ -3,8 +3,12 @@ package com.ahmadzafartech.nextgenplayer.ui.video
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,12 +16,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -28,6 +36,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -40,6 +49,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -52,11 +62,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -64,14 +74,13 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
-import com.ahmadzafartech.nextgenplayer.R
 import com.ahmadzafartech.nextgenplayer.domain.Video
 import com.ahmadzafartech.nextgenplayer.util.formatMillis
+import com.ahmadzafartech.nextgenplayer.util.gradientFromString
 import com.ahmadzafartech.nextgenplayer.viewmodel.VideoListViewModel
 import com.ahmadzafartech.nextgenplayer.viewmodel.VideoPlayerViewModel
 import kotlinx.coroutines.launch
 import java.io.File
-
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -85,208 +94,263 @@ fun VideoListScreen(
     var isSearching by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 
-    // Selected video for bottom sheet
     var selectedVideo by remember { mutableStateOf<Video?>(null) }
     val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(folderPath) {
-        listViewModel.loadVideos(context, folderPath)
-    }
+    LaunchedEffect(folderPath) { listViewModel.loadVideos(context, folderPath) }
 
-    // Filter videos based on search
-    val filteredVideos = if (searchQuery.isEmpty()) {
-        listViewModel.videos
-    } else {
-        listViewModel.videos.filter { it.title.contains(searchQuery, ignoreCase = true) }
-    }
+    val filteredVideos = if (searchQuery.isEmpty()) listViewModel.videos
+    else listViewModel.videos.filter { it.title.contains(searchQuery, ignoreCase = true) }
+    val folderGradient = remember(folderPath) { gradientFromString(folderPath) }
+    val topBarHeight = 56.dp // standard TopAppBar height
 
-    // Main Scaffold
+
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    if (isSearching) {
-                        OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            singleLine = true,
-                            placeholder = { Text("Search videos", color = Color.Gray) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
-                            )
-                        )
-                    } else {
-                        Text(folderPath, color = Color.White)
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        isSearching = !isSearching
-                        if (!isSearching) searchQuery = ""
-                    }) {
-                        Icon(
-                            imageVector = if (isSearching) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = Color.White
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Color(0xFF121212)
-                ),
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        containerColor = Color(0xFF121212)
-    ) { padding ->
-
-        if (filteredVideos.isEmpty()) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("No videos in this folder", color = Color.White)
-            }
-        } else {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+            Box (
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(filteredVideos.size) { index ->
-                    val video = filteredVideos[index]
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = {
-                                    // Play video
-                                    playerViewModel.setPlaylist(context, filteredVideos.toList(), index)
-                                    navController.navigate("player/${Uri.encode(video.uri.toString())}")
-                                },
-                                onLongClick = {
-                                    selectedVideo = video
-                                    scope.launch { bottomSheetState.show() }
-                                }
-                            ),
-                        elevation = CardDefaults.cardElevation(4.dp),
-                        shape = MaterialTheme.shapes.medium,
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
-                    ) {
-                        Column {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(1f)
-                            ) {
-                                val bitmap = video.thumbnail
-                                if (bitmap != null) {
-                                    Image(
-                                        bitmap = bitmap.asImageBitmap(),
-                                        contentDescription = video.title,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop
-                                    )
-                                } else {
-                                    AsyncImage(
-                                        model = video.uri,
-                                        contentDescription = video.title,
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentScale = ContentScale.Crop,
-                                        placeholder = painterResource(R.drawable.ic_launcher_background),
-                                        error = painterResource(R.drawable.ic_launcher_background)
-                                    )
-                                }
-                                Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = "Play",
-                                    tint = Color.White.copy(alpha = 0.7f),
+                    .fillMaxWidth()
+                    .height(topBarHeight + WindowInsets.statusBars.asPaddingValues().calculateTopPadding())
+                    .background(folderGradient)
+            ){
+                CenterAlignedTopAppBar(
+                    title = {
+                        if (isSearching) {
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                singleLine = true,
+                                placeholder = { Text("Search videos", color = Color.Gray) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                )
+                            )
+                        } else Text(folderPath, color = Color.White)
+                    },
+                    actions = {
+                        IconButton(onClick = {
+                            isSearching = !isSearching
+                            if (!isSearching) searchQuery = ""
+                        }) {
+                            Icon(
+                                imageVector = if (isSearching) Icons.Default.Close else Icons.Default.Search,
+                                contentDescription = "Search",
+                                tint = Color.White
+                            )
+                        }
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color.Transparent),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        containerColor = Color.Transparent // make screen transparent to show background Box
+    ) { padding ->
+        // Full screen gradient background
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    folderGradient
+                )
+                .padding(padding)
+        ) {
+            if (filteredVideos.isEmpty()) {
+                Box(
+                    Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) { Text("No videos in this folder", color = Color.White) }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(filteredVideos.size) { index ->
+                        val video = filteredVideos[index]
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = {
+                                        playerViewModel.setPlaylist(
+                                            context,
+                                            filteredVideos.toList(),
+                                            index
+                                        )
+                                        navController.navigate("player/${Uri.encode(video.uri.toString())}")
+                                    },
+                                    onLongClick = {
+                                        selectedVideo = video
+                                        scope.launch { bottomSheetState.show() }
+                                    }
+                                ),
+                            shape = RoundedCornerShape(16.dp),
+                            elevation = CardDefaults.cardElevation(12.dp), // more prominent elevation
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)),
+                            border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.05f))
+                        ) {
+                            Column {
+                                Box(
                                     modifier = Modifier
-                                        .size(36.dp)
-                                        .align(Alignment.Center)
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f)
+                                        .background(
+                                            Brush.verticalGradient(
+                                                colors = listOf(
+                                                    Color(0xFF1F1F1F),
+                                                    Color(0xFF2A2A2A)
+                                                )
+                                            )
+                                        )
+                                ) {
+                                    val bitmap = video.thumbnail
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = video.title,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    } else {
+                                        AsyncImage(
+                                            model = video.uri,
+                                            contentDescription = video.title,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                    }
+
+                                    // Cinematic bottom gradient overlay
+                                    Box(
+                                        modifier = Modifier
+                                            .matchParentSize()
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    colors = listOf(
+                                                        Color.Transparent,
+                                                        Color.Black.copy(alpha = 0.55f)
+                                                    ),
+                                                    startY = 300f
+                                                )
+                                            )
+                                    )
+
+                                    Icon(
+                                        imageVector = Icons.Default.PlayArrow,
+                                        contentDescription = "Play",
+                                        tint = Color.White.copy(alpha = 0.85f),
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .align(Alignment.Center)
+                                    )
+                                }
+
+                                Spacer(Modifier.height(6.dp))
+
+                                Text(
+                                    text = video.title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(horizontal = 10.dp)
+                                )
+
+                                val durationText = video.duration?.let { formatMillis(it) } ?: "Unknown"
+                                Text(
+                                    text = durationText,
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                 )
                             }
-
-                            Spacer(Modifier.height(4.dp))
-
-                            Text(
-                                text = video.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                            )
-
-                            val durationText = video.duration?.let { formatMillis(it) } ?: "Unknown"
-                            Text(
-                                text = durationText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.Gray,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
                         }
                     }
                 }
             }
         }
+        val buttonGradient = Brush.horizontalGradient(
+            colors = listOf(
+                Color.White.copy(alpha = 0.15f),
+                Color.White.copy(alpha = 0.25f)
+            )
+        )
 
-        // Bottom Sheet for Video Info & Share
         if (selectedVideo != null) {
             ModalBottomSheet(
                 onDismissRequest = { selectedVideo = null },
                 sheetState = bottomSheetState,
                 dragHandle = { Spacer(Modifier.height(8.dp)) },
-                containerColor = Color(0xFF011228),
-                tonalElevation = 8.dp,
+                containerColor = Color.Transparent, // make sheet transparent
+                tonalElevation = 0.dp
             ) {
                 val video = selectedVideo!!
-                Column(
-                    Modifier
+                // Gradient Box for Bottom Sheet
+                Box(
+                    modifier = Modifier
                         .fillMaxWidth()
+                        .background(
+                            folderGradient,
+                            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                        )
                         .padding(16.dp)
                 ) {
-                    Text(video.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Row {
-                        Text("Duration: ${video.duration?.let { formatMillis(it) } ?: "Unknown"}",
-                            color = Color.Gray)
-                        Spacer(Modifier.width(16.dp))
-                        Text("Resolution: ${video.width}x${video.height}", color = Color.Gray)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    video.thumbnail?.let {
-                        Image(
-                            bitmap = it.asImageBitmap(),
-                            contentDescription = video.title,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp)
-                                .clip(RoundedCornerShape(12.dp)),
-                            contentScale = ContentScale.Crop
-                        )
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Button(onClick = {
-                            shareVideo(context,video)
-                        }) {
-                            Icon(Icons.Default.Share, contentDescription = "Share")
-                            Spacer(Modifier.width(8.dp))
-                            Text("Share")
+                    Column {
+                        Text(video.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Row {
+                            Text("Duration: ${video.duration?.let { formatMillis(it) } ?: "Unknown"}", color = Color.White)
                         }
-                        // Other buttons like Add to Playlist, Info can go here
+                        Spacer(Modifier.height(8.dp))
+                        video.thumbnail?.let {
+                            Image(
+                                bitmap = it.asImageBitmap(),
+                                contentDescription = video.title,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(200.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                            folderGradient
+                                    )
+                                    .border(
+                                        width = 1.dp,
+                                        brush = Brush.linearGradient(
+                                            colors = listOf(
+                                                Color.White.copy(alpha = 0.3f),
+                                                Color.White.copy(alpha = 0.1f)
+                                            )
+                                        ),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+
+                                    .clickable { shareVideo(context, video) }
+                                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Share",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
                     }
                 }
             }
