@@ -1,7 +1,5 @@
 package com.ahmadzafartech.nextgenplayer.ui.folder
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,7 +36,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -46,7 +43,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import com.ahmadzafartech.nextgenplayer.domain.VideoFolder
+import com.ahmadzafartech.nextgenplayer.util.gradientFromString
 import com.ahmadzafartech.nextgenplayer.viewmodel.FolderViewModel
+import glowBorder
 import java.net.URLEncoder
 
 
@@ -103,10 +102,9 @@ fun FolderListScreen(
                     .padding(paddingValues),
                 contentPadding = PaddingValues(bottom = 80.dp)
             ) {
-                itemsIndexed(folders) { index, folder ->
+                itemsIndexed(folders) { _, folder ->
                     AnimatedFolderRow(
                         folder = folder,
-                        index = index,
                         onClick = {
                             val encoded = URLEncoder.encode(folder.name, "UTF-8")
                             navController.navigate("video_list/$encoded")
@@ -121,87 +119,72 @@ fun FolderListScreen(
 @Composable
 fun AnimatedFolderRow(
     folder: VideoFolder,
-    index: Int,
     onClick: () -> Unit
 ) {
-    var visible by remember { mutableStateOf(false) }
-
-    // Staggered animation delay based on index
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(index * 50L)
-        visible = true
+    val gradient = remember(folder.title) {
+        gradientFromString(folder.title)
     }
-
-    val scale by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.95f,
-        animationSpec = tween(durationMillis = 400)
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(durationMillis = 400)
-    )
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                this.alpha = alpha
-            }
+            .glowBorder(
+                brush = gradient,
+                cornerRadius = 18.dp,
+                alpha = 0.35f
+            )
             .clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        shape = RoundedCornerShape(18.dp),
+        elevation = CardDefaults.cardElevation(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
     ) {
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .background(gradient, RoundedCornerShape(18.dp))
+                .padding(12.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(80.dp)
-                    .background(Color.DarkGray, RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Thumbnail
-                if (folder.thumbnail != null) {
-                    Image(
-                        bitmap = folder.thumbnail.asImageBitmap(),
-                        contentDescription = folder.title,
-                        modifier = Modifier
-                            .size(width = 140.dp, height = 80.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(width = 140.dp, height = 80.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.DarkGray),
-                        contentAlignment = Alignment.Center
-                    ) {
+
+                Box(
+                    modifier = Modifier
+                        .size(width = 140.dp, height = 80.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(alpha = 0.25f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (folder.thumbnail != null) {
+                        Image(
+                            bitmap = folder.thumbnail.asImageBitmap(),
+                            contentDescription = folder.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
                         Text("No Thumbnail", color = Color.White, fontSize = 12.sp)
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(14.dp))
 
-            Column {
-                Text(
-                    text = folder.title,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "${folder.videoCount} videos",
-                    color = Color.Gray
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = folder.title,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = "${folder.videoCount} videos",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 13.sp
+                    )
+                }
             }
         }
     }
