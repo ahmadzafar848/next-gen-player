@@ -3,294 +3,343 @@ package com.ahmadzafartech.nextgenplayer.ui.player
 import android.app.Activity
 import android.content.Context
 import android.content.pm.ActivityInfo
-import android.hardware.SensorManager
 import android.media.AudioManager
 import android.net.Uri
-import android.os.Build
-import android.util.Rational
-import android.view.GestureDetector
-import android.view.MotionEvent
-import android.view.OrientationEventListener
-import android.view.View
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.PictureInPicture
-import androidx.compose.material3.*
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.LifecycleOwner
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.navigation.NavController
 import com.ahmadzafartech.nextgenplayer.viewmodel.VideoPlayerViewModel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 
-// ───────── DataStore extension ─────────
-val Context.dataStore by preferencesDataStore("video_positions")
+enum class GestureMode { NONE, SEEK, VOLUME, BRIGHTNESS }
 
-enum class GestureMode { NONE, SEEK, VOLUME, BRIGHTNESS, SPEED }
-
-@androidx.annotation.OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayerScreen(
     playerViewModel: VideoPlayerViewModel,
     navController: NavController,
-    videoUri: Uri // unique video identifier
+    videoUri: Uri
 ) {
     val context = LocalContext.current
     val activity = context as Activity
-    val exoPlayer = playerViewModel.exoPlayer!!
+    val exoPlayer = playerViewModel.exoPlayer ?: return
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
-    var overlayText by remember { mutableStateOf<String?>(null) }
-    var overlayVisible by remember { mutableStateOf(false) }
+    // --- STATE MANAGEMENT ---
+    var showControls by remember { mutableStateOf(true) }
+    var isPlaying by remember { mutableStateOf(exoPlayer.isPlaying) }
+    var playbackPosition by remember { mutableStateOf(0L) }
+    var duration by remember { mutableStateOf(0L) }
 
-    var isOrientationLocked by remember { mutableStateOf(false) }
-    var currentOrientation by remember { mutableStateOf(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+    // Scrubbing & Gestures
+    var isScrubbing by remember { mutableStateOf(false) }
+    var scrubPosition by remember { mutableStateOf(0L) }
+    var activeGesture by remember { mutableStateOf(GestureMode.NONE) }
 
-    val key = longPreferencesKey(videoUri.toString())
-
-    val coroutineScope = rememberCoroutineScope()
-
-    fun showOverlay(text: String) {
-        overlayText = text
-        overlayVisible = true
+    // Volume/Brightness
+    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    var volumeLevel by remember {
+        mutableStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() /
+                audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1))
+    }
+    var brightnessLevel by remember {
+        mutableStateOf(activity.window.attributes.screenBrightness.let { if (it < 0) 0.5f else it })
     }
 
-    // ───────── Load last playback position automatically ─────────
-    LaunchedEffect(videoUri) {
-        val saved = context.dataStore.data.first()[key] ?: 0L
-        if (saved > 2000L) { // only if >2s
-            exoPlayer.seekTo(saved)
-        }
-    }
-
-    // ───────── Orientation Listener ─────────
-    DisposableEffect(isOrientationLocked) {
-        val orientationListener = object : OrientationEventListener(
-            context,
-            SensorManager.SENSOR_DELAY_UI
-        ) {
-            override fun onOrientationChanged(orientation: Int) {
-                if (isOrientationLocked || orientation == OrientationEventListener.ORIENTATION_UNKNOWN) return
-                currentOrientation = when {
-                    orientation in 80..100 -> ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-                    orientation in 260..280 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-                    orientation in 350..360 || orientation in 0..10 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                    else -> currentOrientation
-                }
-                activity.requestedOrientation = currentOrientation
-            }
-        }
-        orientationListener.enable()
-        onDispose {
-            orientationListener.disable()
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
-    }
-
-    // ───────── Lifecycle Pause/Resume ─────────
-    DisposableEffect(Unit) {
+    // --- LIFECYCLE & PROGRESS UPDATES ---
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            when (event) {
-                Lifecycle.Event.ON_PAUSE -> exoPlayer.pause()
-                Lifecycle.Event.ON_RESUME -> exoPlayer.playWhenReady = playerViewModel.isPlaying
-                else -> Unit
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) {
+                exoPlayer.pause()
+                isPlaying = false
             }
         }
-        (context as LifecycleOwner).lifecycle.addObserver(observer)
-        onDispose { (context as LifecycleOwner).lifecycle.removeObserver(observer) }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            exoPlayer.pause()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val orientationManager = VideoOrientationManager(context, activity)
+        orientationManager.enable()
+
+        onDispose {
+            orientationManager.disable()
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    // --- UPDATE PLAYBACK POSITION & DURATION SMOOTHLY ---
+    LaunchedEffect(exoPlayer, isScrubbing) {
+        while (true) {
+            if (!isScrubbing) {
+                val dur = exoPlayer.duration.takeIf { it > 0 } ?: 0L
+                duration = dur
+                playbackPosition = exoPlayer.currentPosition.coerceIn(0, dur)
+            }
+            delay(100L) // smooth updates ~10 times/sec
+        }
+    }
+
+    // --- AUTO HIDE CONTROLS ---
+    LaunchedEffect(showControls) {
+        if (showControls) {
+            delay(3000)
+            showControls = false
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-
-        // ───────── Video Player View with Gestures ─────────
+        // --- VIDEO SURFACE + GESTURES ---
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-
-                val playerView = PlayerView(ctx).apply {
+                PlayerView(ctx).apply {
                     player = exoPlayer
-                    useController = true
+                    useController = false
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    subtitleView?.visibility = View.VISIBLE
                 }
-
-                val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-
-                var gestureMode = GestureMode.NONE
-                var lastStepY = 0f
-                var speed = exoPlayer.playbackParameters.speed
-
-                val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
-
-                    override fun onDown(e: MotionEvent): Boolean {
-                        gestureMode = GestureMode.NONE
-                        lastStepY = e.y
-                        speed = exoPlayer.playbackParameters.speed
-                        return true
-                    }
-
-                    override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
-                        if (e1 == null) return false // only e1 can be null
-                        val width = playerView.width
-                        val deltaX = e2.x - e1.x
-                        val deltaY = e2.y - e1.y
-
-                        if (gestureMode == GestureMode.NONE) {
-                            gestureMode = when {
-                                kotlin.math.abs(deltaX) > kotlin.math.abs(deltaY) -> GestureMode.SEEK
-                                e1.x < width * 0.33f -> GestureMode.BRIGHTNESS
-                                e1.x > width * 0.66f -> GestureMode.VOLUME
-                                else -> GestureMode.SPEED
-                            }
-                        }
-
-                        val step = lastStepY - e2.y
-                        if (kotlin.math.abs(step) < 8) return true
-                        lastStepY = e2.y
-
-                        when (gestureMode) {
-                            GestureMode.SEEK -> {
-                                val seekMs = (deltaX / width * 90_000).toLong()
-                                exoPlayer.seekTo((exoPlayer.currentPosition + seekMs).coerceIn(0, exoPlayer.duration))
-                                showOverlay("⏩ ${seekMs / 1000}s")
-                            }
-                            GestureMode.BRIGHTNESS -> {
-                                val attrs = activity.window.attributes
-                                attrs.screenBrightness = (attrs.screenBrightness + if (step > 0) 0.02f else -0.02f).coerceIn(0.1f, 1f)
-                                activity.window.attributes = attrs
-                                showOverlay("☀ ${(attrs.screenBrightness * 100).toInt()}%")
-                            }
-                            GestureMode.VOLUME -> {
-                                val cur = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                val newVol = (cur + if (step > 0) 1 else -1).coerceIn(0, maxVolume)
-                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVol, 0)
-                                showOverlay("🔊 ${(newVol * 100) / maxVolume}%")
-                            }
-                            GestureMode.SPEED -> {
-                                speed = (speed + if (step > 0) 0.05f else -0.05f).coerceIn(0.5f, 2.0f)
-                                exoPlayer.setPlaybackSpeed(speed)
-                                showOverlay("⏱ ${"%.2f".format(speed)}x")
-                            }
-                            else -> {}
-                        }
-                        return true
-                    }
-                })
-
-                playerView.setOnTouchListener { _, event ->
-                    gestureDetector.onTouchEvent(event)
-                    false
-                }
-
-                playerView
-            }
-        )
-
-        // ───────── Overlay ─────────
-        if (overlayVisible && overlayText != null) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 50.dp)
-                    .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
-                    .padding(12.dp)
-            ) {
-                Text(
-                    overlayText!!,
-                    color = Color.White,
-                    fontSize = 16.sp
-                )
-            }
-
-            LaunchedEffect(overlayText) {
-                delay(700)
-                overlayVisible = false
-            }
-        }
-
-        // ───────── Orientation Lock Button ─────────
-        IconButton(
-            onClick = {
-                isOrientationLocked = !isOrientationLocked
-                showOverlay(if (isOrientationLocked) "🔒 Orientation Locked" else "🔓 Orientation Unlocked")
             },
             modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(16.dp)
-                .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-        ) {
-            Icon(
-                imageVector = if (isOrientationLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                contentDescription = null,
-                tint = Color.White
-            )
-        }
-
-        // ───────── PIP Button ─────────
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            IconButton(
-                onClick = {
-                    activity.enterPictureInPictureMode(
-                        android.app.PictureInPictureParams.Builder()
-                            .setAspectRatio(Rational(16, 9))
-                            .build()
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { showControls = !showControls },
+                        onDoubleTap = { offset ->
+                            val isForward = offset.x > size.width / 2
+                            val safeDuration = duration.coerceAtLeast(0L)
+                            val newPos = (exoPlayer.currentPosition + if (isForward) 10000 else -10000).coerceIn(0, safeDuration)
+                            exoPlayer.seekTo(newPos)
+                        }
                     )
-                },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-            ) {
-                Icon(Icons.Default.PictureInPicture, contentDescription = "PIP", tint = Color.White)
-            }
+                }
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            activeGesture = if (offset.x < size.width / 2) GestureMode.BRIGHTNESS else GestureMode.VOLUME
+                        },
+                        onDragEnd = { activeGesture = GestureMode.NONE },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            val sensitivity = 0.005f
+                            if (activeGesture == GestureMode.BRIGHTNESS) {
+                                brightnessLevel = (brightnessLevel - dragAmount.y * sensitivity).coerceIn(0f, 1f)
+                                activity.window.attributes = activity.window.attributes.apply { screenBrightness = brightnessLevel }
+                            } else if (activeGesture == GestureMode.VOLUME) {
+                                volumeLevel = (volumeLevel - dragAmount.y * sensitivity).coerceIn(0f, 1f)
+                                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (volumeLevel * max).toInt(), 0)
+                            }
+                        }
+                    )
+                }
+        )
+
+        // --- VOLUME/BRIGHTNESS OVERLAYS ---
+        if (activeGesture == GestureMode.BRIGHTNESS) {
+            NetflixVerticalSlider(icon = Icons.Default.WbSunny, value = brightnessLevel, Modifier.align(Alignment.CenterStart))
+        }
+        if (activeGesture == GestureMode.VOLUME) {
+            NetflixVerticalSlider(icon = Icons.AutoMirrored.Filled.VolumeUp, value = volumeLevel, Modifier.align(Alignment.CenterEnd))
         }
 
-        // ───────── BackHandler ─────────
-        BackHandler {
-            exoPlayer.pause()
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-            navController.popBackStack()
-        }
-    }
+        // --- MAIN CONTROLS ---
+        AnimatedVisibility(visible = showControls, enter = fadeIn(), exit = fadeOut()) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f))) {
 
-    // ───────── Periodic Save Playback Position ─────────
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(2000)
-            val pos = exoPlayer.currentPosition
-            coroutineScope.launch {
-                context.dataStore.edit { it[key] = pos }
+                IconButton(
+                    onClick = { exoPlayer.pause(); navController.popBackStack() },
+                    modifier = Modifier.align(Alignment.TopStart).padding(16.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+
+                // --- CENTER ICONS ---
+                Row(Modifier.align(Alignment.Center), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)) }) {
+                        Icon(Icons.Default.Replay10, null, tint = Color.White, modifier = Modifier.size(50.dp))
+                    }
+                    Spacer(Modifier.width(40.dp))
+                    IconButton(
+                        onClick = {
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            isPlaying = exoPlayer.isPlaying
+                        },
+                        modifier = Modifier.size(90.dp)
+                    ) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.fillMaxSize())
+                    }
+                    Spacer(Modifier.width(40.dp))
+                    IconButton(onClick = {
+                        val safeDuration = duration.coerceAtLeast(0L)
+                        exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceIn(0, safeDuration))
+                    }) {
+                        Icon(Icons.Default.Forward10, null, tint = Color.White, modifier = Modifier.size(50.dp))
+                    }
+                }
+
+                // --- BOTTOM SEEK BAR ---
+                Column(Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp, start = 20.dp, end = 20.dp)) {
+                    NetflixSeekBar(
+                        position = if (isScrubbing) scrubPosition else playbackPosition,
+                        duration = duration,
+                        onScrubStart = {
+                            isScrubbing = true
+                            scrubPosition = playbackPosition
+                        },
+                        onScrubbing = { newTime ->
+                            scrubPosition = newTime
+                        },
+                        onScrubEnd = { finalTime ->
+                            exoPlayer.seekTo(finalTime)
+                            playbackPosition = finalTime
+                            isScrubbing = false
+                        }
+                    )
+                    Row(Modifier.fillMaxWidth().padding(top = 10.dp), Arrangement.SpaceBetween) {
+                        val current = if (isScrubbing) scrubPosition else playbackPosition
+                        Text(formatTime(current), color = Color.White, fontSize = 12.sp)
+                        Text("-${formatTime((duration - current).coerceAtLeast(0))}", color = Color.White, fontSize = 12.sp)
+                    }
+                }
             }
         }
     }
 }
 
-// ───────── Format Time Helper ─────────
+@Composable
+fun NetflixSeekBar(
+    position: Long,
+    duration: Long,
+    onScrubStart: () -> Unit,
+    onScrubbing: (Long) -> Unit,
+    onScrubEnd: (Long) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var scrubbedPosition by remember { mutableStateOf(position) }
+    val progress = if (duration > 0) scrubbedPosition.toFloat() / duration.toFloat() else 0f
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .pointerInput(duration) {
+                detectDragGestures(
+                    onDragStart = {
+                        scrubbedPosition = position
+                        onScrubStart()
+                    },
+                    onDragEnd = {
+                        onScrubEnd(scrubbedPosition)
+                    },
+                    onDragCancel = {
+                        onScrubEnd(scrubbedPosition)
+                    },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        val newProgress = (change.position.x / size.width).coerceIn(0f, 1f)
+                        val newTime = (newProgress * duration).toLong()
+                        scrubbedPosition = newTime
+                        onScrubbing(newTime)
+                    }
+                )
+            }
+            .pointerInput(duration) {
+                detectTapGestures { offset ->
+                    val tappedProgress = (offset.x / size.width).coerceIn(0f, 1f)
+                    val tappedTime = (tappedProgress * duration).toLong()
+                    scrubbedPosition = tappedTime
+                    onScrubEnd(tappedTime)
+                }
+            }
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .align(Alignment.Center)
+        ) {
+            val width = size.width
+            val centerY = size.height / 2
+
+            drawLine(
+                color = Color.White.copy(0.3f),
+                start = Offset(0f, centerY),
+                end = Offset(width, centerY),
+                strokeWidth = 3.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = Color(0xFFE50914),
+                start = Offset(0f, centerY),
+                end = Offset(width * progress, centerY),
+                strokeWidth = 3.dp.toPx(),
+                cap = StrokeCap.Round
+            )
+            drawCircle(
+                color = Color(0xFFE50914),
+                radius = 7.dp.toPx(),
+                center = Offset(width * progress, centerY)
+            )
+        }
+    }
+}
+
+@Composable
+fun NetflixVerticalSlider(icon: ImageVector, value: Float, modifier: Modifier) {
+    Column(
+        modifier = modifier.padding(horizontal = 40.dp).width(40.dp).height(200.dp)
+            .background(Color.Black.copy(0.7f), RoundedCornerShape(20.dp)),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+    ) {
+        Icon(icon, null, tint = Color.White, modifier = Modifier.size(24.dp).padding(bottom = 8.dp))
+        Box(modifier = Modifier.width(4.dp).height(140.dp).background(Color.Gray, CircleShape)) {
+            Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(value).align(Alignment.BottomCenter).background(Color.White, CircleShape))
+        }
+    }
+}
+
 fun formatTime(ms: Long): String {
-    val totalSeconds = ms / 1000
-    val minutes = totalSeconds / 60
+    val totalSeconds = (ms / 1000).coerceAtLeast(0)
     val seconds = totalSeconds % 60
-    return "%02d:%02d".format(minutes, seconds)
+    val minutes = (totalSeconds / 60) % 60
+    val hours = totalSeconds / 3600
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
+    else "%02d:%02d".format(minutes, seconds)
 }
