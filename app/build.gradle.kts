@@ -21,9 +21,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Signing configs for Kotlin DSL
+    signingConfigs {
+        create("release") {
+            storeFile = file("../key.jks")
+            storePassword = "Next0786"
+            keyAlias = "myKeyAlias"
+            keyPassword = "Next@0786"
+        }
+    }
+
     buildTypes {
-        release {
+        getByName("release") {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release") // Kotlin DSL syntax
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
